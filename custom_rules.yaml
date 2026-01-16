@@ -233,7 +233,7 @@
     Cron завдання змінено
     (user=%user.name uid=%user.uid process=%proc.name file=%fd.name
     cmdline=%proc.cmdline parent=%proc.pname)
-  prioriry: WARNING
+  priority: WARNING
   tags: [persistence, mitre_persistence, T1053.003]
 
 - rule: Systemd Service Modified
