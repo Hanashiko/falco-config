@@ -1,0 +1,194 @@
+- macro: open_read
+  condition: (evt.type in (open, openat, openat2) and (fd.typechar='f' or fd.typechar='d') and (evt.arg.flags contains O_RDONLY or evt.arg.flags contains O_RDWR))
+
+- macro: open_write
+  condition: (evt.type in (open, openat, openat2) and (fd.typechar='f' or fd.typechar='d') and (evt.arg.flags contains O_WRONLY or evt.arg.flags contains O_RDWR or evt.arg.flags contains O_CREAT or evt.arg.flags contains O_TRUNC))
+
+- macro: spawned_process
+  condition: (evt.type in (execve, execveat))
+
+- macro: outbound
+  condition: (((evt.type = connect) or (evt.type in (sendto,sendmsg) and fd.l4proto != tcp)) and (fd.typechar = 4 or fd.typechar = 6) and fd.ip != "0.0.0.0")
+
+- macro: container
+  condition: (container.id != host)
+
+#- list: trusted_users
+#  items: [root, ubuntu]
+
+#- list: sensitive_dirs
+#items: [/etc/, /root/, /home, /boot, /usr/bin, /usr/sbin]
+
+- rule: Read Sensitive File
+  desc: Спроба читання критичних файлыв системи
+  condition: >
+    open_read and
+    fd.name in (/etc/shadow, /etc/sudoers, /etc/pam.d/common-password, /root/.ssh/authorized_keys, /home/*/.ssh/authorized_keys, /root/.bash_history, /home/*/.bash_history)
+  output: >
+    Несанціоноване читання чутливого файлу
+    (user=%user.name command=%proc.cmdline file=%fd.name)
+  priority: WARNING
+  tags: [filesystem, mitre_credential_access]
+
+- rule: Modify SSH Configuration
+  desc: Зміна SSH налаштувань
+  condition: >
+    open_write and
+    fd.name in (/etc/ssh/sshd_config, /root/.ssh/authorized_keys, /home/*/.ssh/authorized_keys)
+  output: >
+    SSH конфігурація змінена!
+    (user=%user.name command=%proc.cmdline file=%fd.name)
+  priority: CRITICAL
+  tags: [filesystem, ssh, mitre_persistence]
+
+- rule: Root Shell Started
+  desc: Інтерактивна оболонка запущена від root
+  condition: >
+    spawned_process and
+    user.name = root and
+    proc.name in (bash, sh, zsh, fish, dash) and
+    proc.tty != 0
+  output: >
+    Root оболонка запущена
+    (user=%user.name terminal=%proc.tty command=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [shell, mitre_execution]
+
+- rule: User or Group Modification
+  desc: Зміни в користувачах системи
+  condition: >
+    spawned_process and
+    proc.name in (useradd, userdel, usermod, groupadd, groupdel, groupmod, adduser, deluser)
+  output: >
+    Зміна користувачів системи!
+    (user=%user.name command=%proc.cmdline)
+  priority: CRITICAL
+  tags: [users, mitre_persistence]
+
+- rule: Crontab Modification
+  desc: Зміна cron завдань
+  condition: >
+    spawned_process and
+    (proc.name = crontab or
+      (open_write and fd.name pmatch (/etc/cron*, /var/spool/cron/*)))
+  output: >
+    Cron завданя змінено!
+    (user=%user.name command=%proc.cmdline file=%fd.name)
+  priority: WARNING
+  tags: [persistence, mitre_persistence]
+
+- rule: Binary Execution from Suspicious Location
+  desc: Виконання файлів з тимчасових директорій
+  condition: >
+    spawned_process and
+    (proc.exe startswith /tmp or
+    proc.exe startswith /dev/shm or
+    proc.exe startswith /var/tmp)
+  output: >
+    Виконання бінарника з підозрілого місця!
+    (user=%user.name exe=%proc.exe cmdline=%proc.cmdline)
+  priority: WARNING
+  tags: [execution, mitre_execution]
+
+- rule: Firewall Rules Modified
+  desc: Зміни в firewall
+  condition: >
+    spawned_process and
+    proc.name in (iptables, ip6tables, ufw, firewall-cmd, nft)
+  output: >
+    Firewall правила змінено!
+    (user=%user.name command=%proc.cmdline)
+  priority: WARNING
+  tags: [network, mitre_defense_evasion]
+
+- rule: Package Management
+  desc: Встановлення або видалення пакетів
+  condition: >
+    spawned_process and
+    proc.name in (apt, apt-get, dpkg, yum, dnf, rpm, snap, pip, pip3)
+  output: >
+    Пакетний менеджер використано
+    (user=%user.name command=%proc.cmdline)
+  priority: INFO
+  tags: [software]
+
+- rule: Outbound Connection to Suspicious Port
+  desc: Зєднання з підозрілими портами
+  condition: >
+    outbound and
+    fd.rport in (4444, 5555, 6666, 7777, 8888, 9999, 31337) and
+    not proc.name in (chrome, firefox, telegram)
+  output: >
+    Підозріле вихідне зєднання!
+    (user=%user.name command=%proc.cmdline port=%fd.rport ip=%fd.rip)
+  priority: WARNING
+  tags: [network, mitre_command_and_control]
+
+- rule: Critical System File Modified
+  desc: Зміна критичних системних файлів
+  condition: >
+    open_write and
+    fd.name in (/etc/passwd, /etc/group, /etc/gshadow)
+  output: >
+    КРИТИЧНО! Системний файл змінено
+    (user=%user.name file=%fd.name command=%proc.cmdline)
+  priority: CRITICAL
+  tags: [filesystem, mitre_persistence]
+
+- rule: Privilege Escalation Attempt
+  desc: Спроба підвищення привілеїв
+  condition: >
+    spawned_process and 
+    proc.name in (sudo, su, pkexec, doas) and
+    user.name != root
+  output:
+    Спроба підвищення привілеїв
+    (user=%user.name command=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [privilege_escalation, metre_privilege_escalation]
+
+- rule: Revese Shell Detected
+  desc: Можлива revese shell
+  condition: >
+    spawned_process and
+    proc.name in (nc, ncat, netcat, socat) and
+    proc.cmdline contains "-e"
+  output: >
+    МОЖЛИВА REVESE SHELL!
+    (user=%user.name command=%proc.cmdline)
+  priority: CRITICAL
+  tags: [network, shell, mitre_execution]
+
+- rule: Log File Tampering
+  desc: Спроба видалення або зміни логів
+  condition: >
+    open_write and
+    fd.name pmatch (/var/log/*)
+  output: >
+    Лог файли змінюються!
+    (user=%user.name file=%fd.name command=%proc.cmdline)
+  priority: WARNING
+  tags: [filesystem, logs, mitre_defense_evasion]
+
+- rule: Debugger Attached to Process
+  desc: Debbuger прикріплено до процесу
+  condition: >
+    spawned_process and
+    proc.name in (gdb, strace, ltrace, ptrace)
+  output: >
+    Debugger використовується
+    (user=%user.name command=%proc.cmdline)
+  priority: INFO
+  tags: [oricess, mitre_discovery]
+
+- rule: Container Escape Attempt
+  desc: Можлива спроба втечі з контейнера
+  condition: >
+    container and
+    (proc.name in (nsenter, unshare) or
+    (open_write and fd.name startswith /proc/sys/))
+  output: >
+    МОЖЛИВА СПРОБА ВТЕЧІ З КОНТЕЙНЕРА!
+    (user=%user.name command=%proc.cmdline)
+  priority: CRITICAL
+  tags: [container, mitre_privilege_escalation]
