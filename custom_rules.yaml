@@ -123,7 +123,7 @@
     "passthru(", "shell_exec(", "assert(", "preg_replace("
   ]
 
-- list: known_temp_folders:
+- list: known_temp_folders
   items: [/tmp, /dev/shm, /var/tmp, /run/shm]
 
 - list: suspicious_c2_ports
