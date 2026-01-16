@@ -41,7 +41,7 @@
     snapd, python3, pip3) or
     proc.aname[2] in (apt, apt-get, dpkg))
 
-- micro: legitimate_system_service
+- macro: legitimate_system_service
   condition: >
     (proc.pname in (systemd, init, cron, anacron, atd) or
     proc.name in (systemd-journal, systemd-logind, systemd-udevd, systemd-resolved))
@@ -66,13 +66,13 @@
   items: [root, ubuntu, admin]
 
 - list: service_users
-  item: [
+  items: [
     systemd-network, systemd-resolve, systemd-timesync, syslog, daemon, 
     _apt, messagebus, nobody, www-data, nginx, postfix, mysql, postgres,
     redis, mongodb, elasticsearch
   ]
 
-- item: sensitive_files
+- list: sensitive_files
   items: [
     /etc/shadow, /etc/gshadow, /etc/sudoers, 
     /etc/pam.d/common-password, /etc/pam.d/common-auth, 
@@ -229,7 +229,7 @@
     not proc.name in (common_cron_scripts) and
     not system_automation_tool and
     not legitimate_package_install
-  outpu: >
+  output: >
     Cron завдання змінено
     (user=%user.name uid=%user.uid process=%proc.name file=%fd.name
     cmdline=%proc.cmdline parent=%proc.pname)
