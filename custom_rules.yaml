@@ -1,194 +1,299 @@
+# --- MACROS ---
+
 - macro: open_read
-  condition: (evt.type in (open, openat, openat2) and (fd.typechar='f' or fd.typechar='d') and (evt.arg.flags contains O_RDONLY or evt.arg.flags contains O_RDWR))
+  condition: >
+    (evt.type in (open, openat, openat2) and 
+    evt.is_open_read=true and
+    fd.typechar in (f, d))
 
 - macro: open_write
-  condition: (evt.type in (open, openat, openat2) and (fd.typechar='f' or fd.typechar='d') and (evt.arg.flags contains O_WRONLY or evt.arg.flags contains O_RDWR or evt.arg.flags contains O_CREAT or evt.arg.flags contains O_TRUNC))
+  condition: >
+    (evt.type in (open, openat, openat2) and 
+    evt.is_open_write=true and
+    fd.typechar='f')
 
 - macro: spawned_process
-  condition: (evt.type in (execve, execveat))
+  condition: (evt.type in (execve, execveat) and evt.dir=<)
 
-- macro: outbound
-  condition: (((evt.type = connect) or (evt.type in (sendto,sendmsg) and fd.l4proto != tcp)) and (fd.typechar = 4 or fd.typechar = 6) and fd.ip != "0.0.0.0")
+- macro: outbound_conn
+  condition: >
+    (evt.type = connect and evt.dir=< and
+    (fd.typechar=4 or fd.typechar=6) and
+    fd.sip!="127.0.0.1" and fd.sip!="::1")
 
-- macro: container
-  condition: (container.id != host)
+- macro: interactive_user
+  condition: (proc.tty != 0)
 
-#- list: trusted_users
-#  items: [root, ubuntu]
+- macro: system_automation_tool
+  condition: >
+    (proc.pname in (ansible-playbook, chef-client, puppet, salt-minion, cloud-init, 
+    unattended-upgr) or
+    proc.aname[2] in (ansible-playbook, chef-client, puppet, selt-minion))
 
-#- list: sensitive_dirs
-#items: [/etc/, /root/, /home, /boot, /usr/bin, /usr/sbin]
+- macro: web_server_process
+  condition: >
+    (proc.pname in (nginx, apache2, httpd, php-fpm) or
+    proc.aname[2] in (nginx, apache2, httpd))
 
-- rule: Read Sensitive File
-  desc: Спроба читання критичних файлыв системи
+- macro: legitimate_package_install
+  condition: >
+    (proc.pname in (apt, apt-get, dpkg, yum, dnf, unattended-upgr, packagekitd, 
+    snapd, python3, pip3) or
+    proc.aname[2] in (apt, apt-get, dpkg))
+
+- micro: legitimate_system_service
+  condition: >
+    (proc.pname in (systemd, init, cron, anacron, atd) or
+    proc.name in (systemd-journal, systemd-logind, systemd-udevd, systemd-resolved))
+
+- macro: backup_software
+  condition: >
+    (proc.name in (rsync, tar, gzip, bzip2, xz, duplicity, restic, borg, bacula-fd, amanda, rdiff-backup))
+
+- macro: monitoring_tools
+  condition: >
+    (proc.name in (prometheus, node_exporter, grafana, telegrf, collectd, 
+    zabbix-agentd, datadog-agent, newrelic-infra, netdata, monit))
+
+- macro: log_management
+  condition: >
+    (proc.name in (rsyslogd, syslog-ng, systemd-journald, logrotate, journalctl, 
+    filebeat, fluentd, fluent-bit, logstash, promtail))
+
+# --- LISTS ---
+
+- list: admin_users
+  items: [root, ubuntu, admin]
+
+- list: service_users
+  item: [
+    systemd-network, systemd-resolve, systemd-timesync, syslog, daemon, 
+    _apt, messagebus, nobody, www-data, nginx, postfix, mysql, postgres,
+    redis, mongodb, elasticsearch
+  ]
+
+- item: sensitive_files
+  items: [
+    /etc/shadow, /etc/gshadow, /etc/sudoers, 
+    /etc/pam.d/common-password, /etc/pam.d/common-auth, 
+    /etc/security/pwquality.conf, /etc/security/opasswd
+  ]
+
+- list: ssh_config_files
+  items: [
+    /etc/ssh/sshd_config,
+    /etc/ssh/ssh_config,
+    /root/.ssh/config,
+    /home/*/.ssh/config
+  ]
+
+- list: ssh_key_files
+  items: [
+    /root/.ssh/authorized_keys,
+    /root/.ssh/id_rsa, /root/ssh/id_ed25519, /root/.ssh/id_ecdsa,
+    /home/*/.ssh/authorized_keys,
+    /home/*/.ssh/id_rsa, /home/*/.ssh/id_ed25519, /root/.ssh/id_ecdsa
+  ]
+
+- list: shell_binaries
+  items: [bash, sh, zsh, fish, dash, ksh, tcsh, csh]
+
+- list: user_management_binaries
+  items: [useradd, userdel, usermod, groupadd, groupdel, groupmod, adduser, deluse, passwd, chpasswd]
+
+- list: package_managers
+  items: [apt, apt-get, dpkg, yum, dnf, rpm, snap, pip, pip3, gem, npm, yarn, composer]
+
+- list: network_tools
+  items: [nc, ncat, netcat, socat, telnet, nmap, masscan]
+
+- list: text_editors
+  items: [vim, vi, nano, emacs, joe, mcedit, gedit]
+
+- list: common_cron_scripts
+  items: [
+    run-parts, 0anacron, certbot, anacron, dpkg-db-backup,
+    apt-daily, apt-compat, update-notifier-common, mlocate,
+    popularity-contest, man-db, logrotate
+  ]
+
+- list: web_shells
+  items: [
+    "<?php", "<?=", "eval(", "base64_decode", "system(", "exec(",
+    "passthru(", "shell_exec(", "assert(", "preg_replace("
+  ]
+
+- list: known_temp_folders:
+  items: [/tmp, /dev/shm, /var/tmp, /run/shm]
+
+- list: suspicious_c2_ports
+  items: [4444, 5555, 6666, 7777, 8888, 9999, 31337, 1337]
+
+- list: system_binaries
+  items: [/bin, /sbin, /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin]
+
+# --- RULES ---
+
+# Credential Access
+
+- rule: Read Sensitive File Unauthorized
+  desc: Спроба читання критичних системних файлів непривілейованим користувачем
   condition: >
     open_read and
-    fd.name in (/etc/shadow, /etc/sudoers, /etc/pam.d/common-password, /root/.ssh/authorized_keys, /home/*/.ssh/authorized_keys, /root/.bash_history, /home/*/.bash_history)
+    fd.name in (sensitive_files) and
+    not user.name in (admin_users, service_users) and
+    not proc.name in (sudo, systemd, polkitd, login, su, sshd) and
+    not system_automation_tool and
+    not backup_software
   output: >
     Несанціоноване читання чутливого файлу
-    (user=%user.name command=%proc.cmdline file=%fd.name)
+    (user=%user.name uid=%user.uid gid=%usr.gid process=%proc.name
+    file=%fd.name cmdline=%proc.cmdline parent=%proc.pname gparent=%proc.aname[2])
   priority: WARNING
-  tags: [filesystem, mitre_credential_access]
+  tags: [filesystem, mitre_credential_access, T1003]
 
-- rule: Modify SSH Configuration
-  desc: Зміна SSH налаштувань
+- rule: SSH Private Key Access
+  desc: Доступ до SSH приватних ключів
+  condition: >
+    open_read and
+    (fd.name glob /root/.ssh/id_* or fd.name glob /home/*/.ssh/id_*) and
+    not fd.name glob *.pub and
+    not proc.name in (sshd, ssh, ssh-agent, ssh-add, scp, sftp) and
+    not proc.name in (text_editors) and
+    not backup_software and
+    not monitoring_software
+  output:
+    Доступ до SSH приватного ключа
+    (user=%user.name process=%proc.name file=%fd.name
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [ssh, mitre_credential_access, T1552.004]
+
+- rule: Bash History Read by Suspicious Process
+  desc: Читання історії команд підощрілим процесом
+  condition: >
+    open_read and
+    (fd.name glob /home/*/.bash_history or
+    fd.name glob /home/*/.zsh_history or
+    fd.name=/root/.bash_history or
+    fd.name=/root/.zsh_history) and
+    not proc.name in (bash, zsh, sh) and
+    not proc.name in (text_editors) and
+    not backup_software and
+    not proc.pname in (shell_binaries)
+  output: >
+    Підозріле читання історії команд
+    (user=%user.name process=%proc.name file=%fd.name
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [filesystem, mitre_credential_access, T1552]
+
+# Persistence
+
+- rule: SSH Configuration Modified
+  desc: Зміна SSH конфігурації або authorized_keys
   condition: >
     open_write and
-    fd.name in (/etc/ssh/sshd_config, /root/.ssh/authorized_keys, /home/*/.ssh/authorized_keys)
+    (fd.name in (ssh_config_files) or
+    fd.name pmatch (ssh_key_files)) and
+    not system_automation_tool and
+    not (user.name in (admin_users) and interactive_user)
   output: >
-    SSH конфігурація змінена!
-    (user=%user.name command=%proc.cmdline file=%fd.name)
+    SSH конфігурація змінена
+    (usr=%user.name uid=%user.uid process=%proc.name file=%fd.name
+    cmdline=%proc.cmdline parent=%proc.pname terminal=%proc.tty)
   priority: CRITICAL
-  tags: [filesystem, ssh, mitre_persistence]
+  tags: [ssh, mitre_persistence, T1098.004]
 
-- rule: Root Shell Started
-  desc: Інтерактивна оболонка запущена від root
+- rule: User Account Modified
+  desc: Зміна користувачів або груп системи
   condition: >
     spawned_process and
-    user.name = root and
-    proc.name in (bash, sh, zsh, fish, dash) and
-    proc.tty != 0
+    proc.name in (user_management_binaries) and
+    not system_automation_tool and
+    not legitimate_system_service and
+    not (proc.cmdline contains "--version" or proc.cmdline contains "--help")
   output: >
-    Root оболонка запущена
-    (user=%user.name terminal=%proc.tty command=%proc.cmdline parent=%proc.pname)
-  priority: WARNING
-  tags: [shell, mitre_execution]
-
-- rule: User or Group Modification
-  desc: Зміни в користувачах системи
-  condition: >
-    spawned_process and
-    proc.name in (useradd, userdel, usermod, groupadd, groupdel, groupmod, adduser, deluser)
-  output: >
-    Зміна користувачів системи!
-    (user=%user.name command=%proc.cmdline)
+    Обліковий запис користувача змінено
+    (user=%user.name uid=%user.uid command=%proc.name
+    cmdline=%proc.cmdline parent=%proc.pname terminal=%proc.tty)
   priority: CRITICAL
-  tags: [users, mitre_persistence]
+  tags: [users, mitre_persistence, T1136]
 
-- rule: Crontab Modification
+- rule: Cron Job Modified
   desc: Зміна cron завдань
   condition: >
-    spawned_process and
-    (proc.name = crontab or
-      (open_write and fd.name pmatch (/etc/cron*, /var/spool/cron/*)))
-  output: >
-    Cron завданя змінено!
-    (user=%user.name command=%proc.cmdline file=%fd.name)
-  priority: WARNING
-  tags: [persistence, mitre_persistence]
+    ((spawned_process and proc.name=crontab and
+    not proc.cmdline contains "-l") or
+    (open_write and fd.name pmatch (/etc/cron*, /var/spool/cron/*))) and
+    not proc.name in (common_cron_scripts) and
+    not system_automation_tool and
+    not legitimate_package_install
+  outpu: >
+    Cron завдання змінено
+    (user=%user.name uid=%user.uid process=%proc.name file=%fd.name
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priorirt: WARNING
+  tags: [persistence, mitre_persistence, T1053.003]
 
-- rule: Binary Execution from Suspicious Location
-  desc: Виконання файлів з тимчасових директорій
+- rule: Systemd Service Modified
+  desc: Зміна systemd сервісів
   condition: >
-    spawned_process and
-    (proc.exe startswith /tmp or
-    proc.exe startswith /dev/shm or
-    proc.exe startswith /var/tmp)
+    (open_write and fd.name pmatch (/etc/systemd/system/*, /lib/systemd/system/*)) and
+    not proc.name in (systemd, systemctl, dpkg, apt, apt-get) and
+    not system_automation_tool and
+    not legitimate_package_install
   output: >
-    Виконання бінарника з підозрілого місця!
-    (user=%user.name exe=%proc.exe cmdline=%proc.cmdline)
+    Systemd сервіс змінено
+    (user=%user.name process=%proc.name file=%fd.name
+    cmdline=%proc.cmdline parent=%proc.pname)
   priority: WARNING
-  tags: [execution, mitre_execution]
-
-- rule: Firewall Rules Modified
-  desc: Зміни в firewall
-  condition: >
-    spawned_process and
-    proc.name in (iptables, ip6tables, ufw, firewall-cmd, nft)
-  output: >
-    Firewall правила змінено!
-    (user=%user.name command=%proc.cmdline)
-  priority: WARNING
-  tags: [network, mitre_defense_evasion]
-
-- rule: Package Management
-  desc: Встановлення або видалення пакетів
-  condition: >
-    spawned_process and
-    proc.name in (apt, apt-get, dpkg, yum, dnf, rpm, snap, pip, pip3)
-  output: >
-    Пакетний менеджер використано
-    (user=%user.name command=%proc.cmdline)
-  priority: INFO
-  tags: [software]
-
-- rule: Outbound Connection to Suspicious Port
-  desc: Зєднання з підозрілими портами
-  condition: >
-    outbound and
-    fd.rport in (4444, 5555, 6666, 7777, 8888, 9999, 31337) and
-    not proc.name in (chrome, firefox, telegram)
-  output: >
-    Підозріле вихідне зєднання!
-    (user=%user.name command=%proc.cmdline port=%fd.rport ip=%fd.rip)
-  priority: WARNING
-  tags: [network, mitre_command_and_control]
+  tags: [persistence, mitre_persistence, T1053.006]
 
 - rule: Critical System File Modified
-  desc: Зміна критичних системних файлів
+  desc: зміна критичних системних файлів
   condition: >
     open_write and
-    fd.name in (/etc/passwd, /etc/group, /etc/gshadow)
+    fd.name in (/etc/passwd, /etc/group, /etc/shadow, /etc/gshadow, /etc/sudoers) and
+    not proc.name in (user_management_binaries, vipw, vigr, visudo, chage) and
+    not system_automation_tool and
+    not legitimate_package_install
   output: >
-    КРИТИЧНО! Системний файл змінено
-    (user=%user.name file=%fd.name command=%proc.cmdline)
+    КРИТИЧНО: Системний файл аутентифікації змінено
+    (user=%user.name uid=%user.uid process=%proc.name file=%fd.name
+    cmdline=%proc.cmdline parent=%proc.pname)
   priority: CRITICAL
-  tags: [filesystem, mitre_persistence]
+  tags: [filesystem, mitre_persistence, T1098]
 
-- rule: Privilege Escalation Attempt
-  desc: Спроба підвищення привілеїв
-  condition: >
-    spawned_process and 
-    proc.name in (sudo, su, pkexec, doas) and
-    user.name != root
-  output:
-    Спроба підвищення привілеїв
-    (user=%user.name command=%proc.cmdline parent=%proc.pname)
-  priority: WARNING
-  tags: [privilege_escalation, metre_privilege_escalation]
-
-- rule: Revese Shell Detected
-  desc: Можлива revese shell
-  condition: >
-    spawned_process and
-    proc.name in (nc, ncat, netcat, socat) and
-    proc.cmdline contains "-e"
-  output: >
-    МОЖЛИВА REVESE SHELL!
-    (user=%user.name command=%proc.cmdline)
-  priority: CRITICAL
-  tags: [network, shell, mitre_execution]
-
-- rule: Log File Tampering
-  desc: Спроба видалення або зміни логів
+- rule: RC Script Modified
+  desc: Зміна startup скриптів
   condition: >
     open_write and
-    fd.name pmatch (/var/log/*)
+    (fd.name pmatch (etc/rc*.d/*, /etc/init.d/*)) and
+    not proc.name in (update-rc.d, insserv, dpkg, apt, apt-get) and
+    not system_automation_tool
   output: >
-    Лог файли змінюються!
-    (user=%user.name file=%fd.name command=%proc.cmdline)
+    Startup скрипт змінено
+    (user=%user.name process=%proc.name file=%fd.name cmdline=%proc.cmdline
   priority: WARNING
-  tags: [filesystem, logs, mitre_defense_evasion]
+  tags: [persistence, mitre_persistence, T1037]
 
-- rule: Debugger Attached to Process
-  desc: Debbuger прикріплено до процесу
+# Privilege Escalation
+
+- rule: Privilege Escalation via Sudo
+  desc:  Використання sudo для підвищення привілеїв
   condition: >
     spawned_process and
-    proc.name in (gdb, strace, ltrace, ptrace)
+    proc.name in (sudo, su) and
+    not user.name=root and
+    not legitimate_system_service and
+    interactive_user and
+    not (proc.cmdline contains "--version" or proc.cmdline contains "--help")
   output: >
-    Debugger використовується
-    (user=%user.name command=%proc.cmdline)
+    Підвищення привілеїв
+    (user=%user.name uid=%user.uid command=%proc.name
+    cmdline=%proc.cmdline parent=%proc.name terminal=%proc.tty)
   priority: INFO
-  tags: [oricess, mitre_discovery]
+  tags: [privilege_escalation, mitre_privilege_escalation, T1548.003]
+    
 
-- rule: Container Escape Attempt
-  desc: Можлива спроба втечі з контейнера
-  condition: >
-    container and
-    (proc.name in (nsenter, unshare) or
-    (open_write and fd.name startswith /proc/sys/))
-  output: >
-    МОЖЛИВА СПРОБА ВТЕЧІ З КОНТЕЙНЕРА!
-    (user=%user.name command=%proc.cmdline)
-  priority: CRITICAL
-  tags: [container, mitre_privilege_escalation]
