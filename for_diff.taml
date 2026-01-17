@@ -1,4 +1,10 @@
-# --- MACROS ---
+# ==============================================================================
+# Falco Security Rules - Linux Server Production Environment
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# MACROS - Reusable conditions
+# ------------------------------------------------------------------------------
 
 - macro: open_read
   condition: >
@@ -50,7 +56,7 @@
   condition: >
     (proc.name in (rsync, tar, gzip, bzip2, xz, duplicity, restic, borg, bacula-fd, amanda, rdiff-backup))
 
-- macro: monitoring_tools
+- macro: monitoring_software
   condition: >
     (proc.name in (prometheus, node_exporter, grafana-server, telegraf, collectd, 
     zabbix_agentd, datadog-agent, newrelic-infra, netdata, monit))
@@ -60,7 +66,9 @@
     (proc.name in (rsyslogd, syslog-ng, systemd-journald, logrotate, journalctl,
     filebeat, fluentd, fluent-bit, logstash, promtail))
 
-# --- LISTS ---
+# ------------------------------------------------------------------------------
+# LISTS - Trusted entities and sensitive paths
+# ------------------------------------------------------------------------------
 
 - list: admin_users
   items: [root, ubuntu, admin]
@@ -74,8 +82,8 @@
 
 - list: sensitive_files
   items: [
-    /etc/shadow, /etc/gshadow, /etc/sudoers, 
-    /etc/pam.d/common-password, /etc/pam.d/common-auth, 
+    /etc/shadow, /etc/gshadow, /etc/sudoers,
+    /etc/pam.d/common-password, /etc/pam.d/common-auth,
     /etc/security/pwquality.conf, /etc/security/opasswd
   ]
 
@@ -90,19 +98,19 @@
 - list: ssh_key_files
   items: [
     /root/.ssh/authorized_keys,
-    /root/.ssh/id_rsa, /root/ssh/id_ed25519, /root/.ssh/id_ecdsa,
+    /root/.ssh/id_rsa, /root/.ssh/id_ed25519, /root/.ssh/id_ecdsa,
     /home/*/.ssh/authorized_keys,
-    /home/*/.ssh/id_rsa, /home/*/.ssh/id_ed25519, /root/.ssh/id_ecdsa
+    /home/*/.ssh/id_rsa, /home/*/.ssh/id_ed25519, /home/*/.ssh/id_ecdsa
   ]
 
 - list: shell_binaries
   items: [bash, sh, zsh, fish, dash, ksh, tcsh, csh]
 
 - list: user_management_binaries
-  items: [useradd, userdel, usermod, groupadd, groupdel, groupmod, adduser, deluse, passwd, chpasswd]
+  items: [useradd, userdel, usermod, groupadd, groupdel, groupmod, adduser, deluser, passwd, chpasswd]
 
 - list: package_managers
-  items: [apt, apt-get, dpkg, yum, dnf, rpm, snap, pip, pip3, gem, npm, yarn, composer]
+  items: [apt, apt-get, dpkg, yum, dnf, rpm, zypper, snap, pip, pip3, gem, npm, yarn, composer]
 
 - list: network_tools
   items: [nc, ncat, netcat, socat, telnet, nmap, masscan]
@@ -117,12 +125,6 @@
     popularity-contest, man-db, logrotate
   ]
 
-- list: web_shells
-  items: [
-    "<?php", "<?=", "eval(", "base64_decode", "system(", "exec(",
-    "passthru(", "shell_exec(", "assert(", "preg_replace("
-  ]
-
 - list: known_temp_folders
   items: [/tmp, /dev/shm, /var/tmp, /run/shm]
 
@@ -132,9 +134,11 @@
 - list: system_binaries
   items: [/bin, /sbin, /usr/bin, /usr/sbin, /usr/local/bin, /usr/local/sbin]
 
-# --- RULES ---
+# ------------------------------------------------------------------------------
+# SECURITY RULES - Linux Server Environment
+# ------------------------------------------------------------------------------
 
-# Credential Access
+# === CREDENTIAL ACCESS ===
 
 - rule: Read Sensitive File Unauthorized
   desc: Спроба читання критичних системних файлів непривілейованим користувачем
@@ -146,8 +150,8 @@
     not system_automation_tool and
     not backup_software
   output: >
-    Несанціоноване читання чутливого файлу
-    (user=%user.name uid=%user.uid gid=%user.gid process=%proc.name 
+    Несанкціоноване читання чутливого файлу
+    (user=%user.name uid=%user.uid process=%proc.name 
     file=%fd.name cmdline=%proc.cmdline parent=%proc.pname gparent=%proc.aname[2])
   priority: WARNING
   tags: [filesystem, mitre_credential_access, T1003]
@@ -162,7 +166,7 @@
     not proc.name in (text_editors) and
     not backup_software and
     not monitoring_software
-  output:
+  output: >
     Доступ до SSH приватного ключа
     (user=%user.name process=%proc.name file=%fd.name
     cmdline=%proc.cmdline parent=%proc.pname)
@@ -170,7 +174,7 @@
   tags: [ssh, mitre_credential_access, T1552.004]
 
 - rule: Bash History Read by Suspicious Process
-  desc: Читання історії команд підощрілим процесом
+  desc: Читання історії команд підозрілим процесом
   condition: >
     open_read and
     (fd.name glob /home/*/.bash_history or
@@ -188,7 +192,7 @@
   priority: INFO
   tags: [filesystem, mitre_credential_access, T1552]
 
-# Persistence
+# === PERSISTENCE ===
 
 - rule: SSH Configuration Modified
   desc: Зміна SSH конфігурації або authorized_keys
@@ -200,7 +204,7 @@
     not (user.name in (admin_users) and interactive_user)
   output: >
     SSH конфігурація змінена
-    (usr=%user.name uid=%user.uid process=%proc.name file=%fd.name
+    (user=%user.name uid=%user.uid process=%proc.name file=%fd.name
     cmdline=%proc.cmdline parent=%proc.pname terminal=%proc.tty)
   priority: CRITICAL
   tags: [ssh, mitre_persistence, T1098.004]
@@ -251,7 +255,7 @@
   tags: [persistence, mitre_persistence, T1053.006]
 
 - rule: Critical System File Modified
-  desc: зміна критичних системних файлів
+  desc: Зміна критичних системних файлів
   condition: >
     open_write and
     fd.name in (/etc/passwd, /etc/group, /etc/shadow, /etc/gshadow, /etc/sudoers) and
@@ -269,19 +273,19 @@
   desc: Зміна startup скриптів
   condition: >
     open_write and
-    (fd.name pmatch (etc/rc*.d/*, /etc/init.d/*)) and
+    (fd.name pmatch (/etc/rc*.d/*, /etc/init.d/*)) and
     not proc.name in (update-rc.d, insserv, dpkg, apt, apt-get) and
     not system_automation_tool
   output: >
     Startup скрипт змінено
-    (user=%user.name process=%proc.name file=%fd.name cmdline=%proc.cmdline
+    (user=%user.name process=%proc.name file=%fd.name cmdline=%proc.cmdline)
   priority: WARNING
   tags: [persistence, mitre_persistence, T1037]
 
-# Privilege Escalation
+# === PRIVILEGE ESCALATION ===
 
 - rule: Privilege Escalation via Sudo
-  desc:  Використання sudo для підвищення привілеїв
+  desc: Використання sudo для підвищення привілеїв
   condition: >
     spawned_process and
     proc.name in (sudo, su) and
@@ -292,10 +296,10 @@
   output: >
     Підвищення привілеїв
     (user=%user.name uid=%user.uid command=%proc.name
-    cmdline=%proc.cmdline parent=%proc.name terminal=%proc.tty)
+    cmdline=%proc.cmdline parent=%proc.pname terminal=%proc.tty)
   priority: INFO
   tags: [privilege_escalation, mitre_privilege_escalation, T1548.003]
-    
+
 - rule: SUID Binary Modified
   desc: Встановлення SUID/SGID біта
   condition: >
@@ -311,11 +315,11 @@
   output: >
     SUID/SGID біт встановлено
     (user=%user.name process=%proc.name cmdline=%proc.cmdline
-    parent=%proc.name)
+    parent=%proc.pname)
   priority: WARNING
   tags: [filesystem, mitre_privilege_escalation, T1548.001]
 
-# Execution
+# === EXECUTION ===
 
 - rule: Root Interactive Shell
   desc: Інтерактивна оболонка запущена від root
@@ -324,7 +328,7 @@
     user.name=root and
     proc.name in (shell_binaries) and
     interactive_user and
-    not proc.name in (sshd, login, systemd, init, cron, su, sudo, screen, tmux, sshd, mosh-server) and
+    not proc.pname in (sshd, login, systemd, init, cron, su, sudo, screen, tmux, mosh-server) and
     not system_automation_tool
   output: >
     Root shell запущено
@@ -338,7 +342,7 @@
   condition: >
     spawned_process and
     proc.exe pmatch (known_temp_folders) and
-    not proc.name in (apt-key dpkg-preconfigure, debconf) and
+    not proc.name in (apt-key, dpkg-preconfigure, debconf) and
     not legitimate_package_install and
     not proc.pname in (package_managers)
   output: >
@@ -368,14 +372,14 @@
   desc: Можливе завантаження веб-шелу
   condition: >
     open_write and
-    (fd.directory in (/var/www, /usr/share/nginx, /src/http) or
+    (fd.directory in (/var/www, /usr/share/nginx, /srv/http) or
     fd.directory glob /var/www/*/public_html) and
     (fd.name glob *.php or fd.name glob *.jsp or fd.name glob *.asp* or fd.name glob *.cgi) and
     web_server_process
   output: >
     КРИТИЧНО: Можливий веб-шел
     (user=%user.name uid=%user.uid file=%fd.name
-    directory=%fd.directory process=%proc.name parent=%proc.name)
+    directory=%fd.directory process=%proc.name parent=%proc.pname)
   priority: CRITICAL
   tags: [webshell, mitre_persistence, T1505.003]
 
@@ -397,7 +401,7 @@
   priority: INFO
   tags: [execution, mitre_execution]
 
-# defense evasion
+# === DEFENSE EVASION ===
 
 - rule: Firewall Modified
   desc: Зміна правил фаєрволу
@@ -410,7 +414,7 @@
     proc.cmdline contains "status")
   output: >
     Правила фаєрволу змінено
-    (usr=%user.name uid=%user.uid command=%proc.name
+    (user=%user.name uid=%user.uid command=%proc.name
     cmdline=%proc.cmdline parent=%proc.pname)
   priority: WARNING
   tags: [network, mitre_defense_evasion, T1562.004]
@@ -427,12 +431,12 @@
   output: >
     Системний лог змінено
     (user=%user.name uid=%user.uid process=%proc.name
-    file=%fd.name cmdline=%proc.cmdline parent=%proc.name)
+    file=%fd.name cmdline=%proc.cmdline parent=%proc.pname)
   priority: WARNING
   tags: [logs, mitre_defense_evasion, T1070.002]
 
 - rule: Command History Cleared
-  desc: Історі команд видалена
+  desc: Історія команд видалена
   condition: >
     (evt.type in (unlink, unlinkat) or
     (open_write and evt.arg.flags contains O_TRUNC)) and
@@ -444,7 +448,7 @@
   output: >
     Історія команд видалена/очищена
     (user=%user.name uid=%user.uid process=%proc.name
-    file=%fd.name cmdline=%prc.cmdline)
+    file=%fd.name cmdline=%proc.cmdline)
   priority: WARNING
   tags: [defense_evasion, mitre_defense_evasion, T1070.003]
 
@@ -460,11 +464,11 @@
     not backup_software
   output: >
     Зміна timestamp файлу
-    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.name)
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
   priority: INFO
   tags: [defense_evasion, mitre_defense_evasion, T1070.006]
 
-- rule: Auditd Disables
+- rule: Auditd Disabled
   desc: Відключення системи аудиту
   condition: >
     spawned_process and
@@ -473,34 +477,34 @@
     proc.name=auditctl)
   output: >
     Система аудиту відключена
-    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.name)
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
   priority: CRITICAL
   tags: [defense_evasion, mitre_defense_evasion, T1562.001]
 
-# command and control
+# === COMMAND AND CONTROL ===
 
 - rule: Outbound Connection to Suspicious Port
-  desc: Зєднання з підозрілими портами
+  desc: З'єднання з підозрілими портами
   condition: >
     outbound_conn and
     fd.rport in (suspicious_c2_ports) and
     not proc.name in (chrome, firefox, chromium, brave, ssh, scp, rsync) and
     not monitoring_software
   output: >
-    Підозріле вихідне зєднання
+    Підозріле вихідне з'єднання
     (user=%user.name process=%proc.name cmdline=%proc.cmdline
-    connection=%fd.sip:%fd.sport->%fd.rip:fd.rport protocol:%fd.l4proto)
+    connection=%fd.sip:%fd.sport->%fd.rip:%fd.rport protocol=%fd.l4proto)
   priority: WARNING
   tags: [network, mitre_command_and_control, T1071]
 
 - rule: Suspicious Outbound Connection from Service
-  desc: Веб-сервер або БД робить вихідні зєднання
+  desc: Веб-сервер або БД робить вихідні з'єднання
   condition: >
     outbound_conn and
     proc.name in (nginx, apache2, httpd, mysqld, postgres, redis-server, mongodb, mongod) and
     not fd.rport in (80, 443, 53, 123, 3306, 5432, 6379, 27017)
   output: >
-    Підозріле зєднання від сервісу
+    Підозріле з'єднання від сервісу
     (user=%user.name service=%proc.name cmdline=%proc.cmdline
     connection=%fd.sip:%fd.sport->%fd.rip:%fd.rport)
   priority: WARNING
@@ -520,7 +524,7 @@
   priority: INFO
   tags: [network, mitre_command_and_control, T1071.004]
 
-# discovery
+# === DISCOVERY ===
 
 - rule: Network Scanning Tool
   desc: Використання інструментів сканування мережі
@@ -550,7 +554,7 @@
   priority: INFO
   tags: [discovery, mitre_discovery, T1033]
 
-- rule: Process Descovery
+- rule: Process Discovery
   desc: Перелік процесів
   condition: >
     spawned_process and
@@ -578,7 +582,7 @@
   priority: INFO
   tags: [network, mitre_discovery, T1016]
 
-# lateral movement
+# === LATERAL MOVEMENT ===
 
 - rule: SSH Brute Force Attempt
   desc: Множинні SSH підключення
@@ -607,21 +611,21 @@
   priority: WARNING
   tags: [lateral_movement, mitre_lateral_movement, T1021.004]
 
-# Impact
+# === IMPACT ===
 
 - rule: Data Destruction Command
-  desc: Команда масового видалення
+  desc: Команди масового видалення
   condition: >
     spawned_process and
     proc.name in (rm, shred, dd) and
     (proc.cmdline contains "-rf /" or
     proc.cmdline contains "if=/dev/zero" or
-    proc.cmdline contains "if=/dev/urandom" and
+    proc.cmdline contains "if=/dev/urandom") and
     not backup_software
   output: >
-    КРИТИЧНО: Команда маосовго видалення
+    КРИТИЧНО: Команда масового видалення
     (user=%user.name uid=%user.uid command=%proc.name
-    cmdline=%proc.cmdline parent=%proc.pname
+    cmdline=%proc.cmdline parent=%proc.pname)
   priority: CRITICAL
   tags: [impact, mitre_impact, T1485]
 
@@ -638,21 +642,21 @@
   priority: CRITICAL
   tags: [impact, mitre_impact, T1499]
 
-# Information
+# === INFORMATIONAL ===
 
 - rule: Package Manager Activity
-  desc: Втсановлення/Видалення пакетів
+  desc: Встановлення/видалення пакетів
   condition: >
     spawned_process and
-    proc.name in (package_managers_ and
+    proc.name in (package_managers) and
     not system_automation_tool and
     not legitimate_system_service and
-    not (proc.cmdine contains "update" or
-    proc.cmdine contains "upgrade" or
-    proc.cmdine contains "list" or
-    proc.cmdine contains "search" or
-    proc.cmdine contains "--version" or
-    proc.cmdine contains "--help")
+    not (proc.cmdline contains "update" or
+    proc.cmdline contains "upgrade" or
+    proc.cmdline contains "list" or
+    proc.cmdline contains "search" or
+    proc.cmdline contains "--version" or
+    proc.cmdline contains "--help")
   output: >
     Пакетний менеджер використано
     (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
@@ -663,15 +667,13 @@
   desc: Перезавантаження системи
   condition: >
     spawned_process and
-    proc.name in (reboot, shutdown, poweroff, halt, init) and 
+    proc.name in (reboot, shutdown, poweroff, halt, init) and
     (proc.cmdline contains "reboot" or
     proc.cmdline contains "poweroff" or
     proc.cmdline contains "6" or
     proc.cmdline contains "0")
   output: >
-    система перезавантажується
+    Система перезавантажується
     (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
   priority: WARNING
   tags: [system]
-    
-
