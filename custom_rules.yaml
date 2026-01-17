@@ -147,7 +147,7 @@
     not backup_software
   output: >
     Несанціоноване читання чутливого файлу
-    (user=%user.name uid=%user.uid gid=%usr.gid process=%proc.name
+    (user=%user.name uid=%user.uid gid=%user.gid process=%proc.name 
     file=%fd.name cmdline=%proc.cmdline parent=%proc.pname gparent=%proc.aname[2])
   priority: WARNING
   tags: [filesystem, mitre_credential_access, T1003]
@@ -296,4 +296,184 @@
   priority: INFO
   tags: [privilege_escalation, mitre_privilege_escalation, T1548.003]
     
+- rule: SUID Binary Modified
+  desc: Встановлення SUID/SGID біта
+  condition: >
+    spawned_process and
+    proc.name=chmod and
+    (proc.cmdline contains "+s" or
+    proc.cmdline contains "u+s" or
+    proc.cmdline contains "g+s" or
+    proc.cmdline contains "4" or
+    proc.cmdline contains "2") and
+    not system_automation_tool and
+    not legitimate_package_install
+  output: >
+    SUID/SGID біт встановлено
+    (user=%user.name process=%proc.name cmdline=%proc.cmdline
+    parent=%proc.name)
+  priority: WARNING
+  tags: [filesystem, mitre_privilege_escalation, T1548.001]
+
+# Execution
+
+- rule: Root Interactive Shell
+  desc: Інтерактивна оболонка запущена від root
+  condition: >
+    spawned_process and
+    user.name=root and
+    proc.name in (shell_binaries) and
+    interactive_user and
+    not proc.name in (sshd, login, systemd, init, cron, su, sudo, screen, tmux, sshd, mosh-server) and
+    not system_automation_tool
+  output: >
+    Root shell запущено
+    (user=%user.name shell=%proc.name terminal=%proc.tty
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [shell, mitre_execution, T1059.004]
+
+- rule: Binary Executed from Temp Directory
+  desc: Виконання бінарників з тимчасових директорій
+  condition: >
+    spawned_process and
+    proc.exe pmatch (known_temp_folders) and
+    not proc.name in (apt-key dpkg-preconfigure, debconf) and
+    not legitimate_package_install and
+    not proc.pname in (package_managers)
+  output: >
+    Виконання з тимчасової директорії
+    (user=%user.name uid=%user.uid exe=%proc.exe
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [execution, mitre_execution, T1204.002]
+
+- rule: Reverse Shell Detected
+  desc: Можлива reverse shell
+  condition: >
+    spawned_process and
+    proc.name in (network_tools) and
+    (proc.cmdline contains "-e /bin" or
+    proc.cmdline contains "-e /usr/bin" or
+    proc.cmdline contains "exec" or
+    proc.cmdline regex "nc.*-e.*/bin/(ba)?sh")
+  output: >
+    КРИТИЧНО: Можлива reverse shell
+    (user=%user.name uid=%user.uid process=%proc.name
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: CRITICAL
+  tags: [network, mitre_execution, T1059]
+
+- rule: Web Shell Upload Detected
+  desc: Можливе завантаження веб-шелу
+  condtion: >
+    open_write and
+    (fd.directory in (/var/www, /usr/share/nginx, /src/http) or
+    fd.directory glob /var/www/*/public_html) and
+    (fd.name glob *.php or fd.name glob *.jsp or fd.name glob *.asp* or fd.name glob *.cgi) and
+    web_server_process
+  output: >
+    КРИТИЧНО: Можливий веб-шел
+    (user=%user.name uid=%user.uid file=%fd.name
+    directory=%fd.directory process=%proc.name parent=%proc.name)
+  priority: CRITICAL
+  tags: [webshell, mitre_persistence, T1505.003]
+
+- rule: Script Interpreter with Network Activity
+  desc: Скриптовий інтерпретатор з мережевою активністю
+  condition: >
+    spawned_process and
+    proc.name in (python, python3, perl, ruby, php, node, bash, sh) and
+    (proc.cmdline contains "socket" or
+    proc.cmdline contains "urllib" or
+    proc.cmdline contains "requests" or
+    proc.cmdline contains "curl" or
+    proc.cmdline contains "wget") and
+    not system_automation_tool and
+    not monitoring_software
+  output: >
+    Скрипт з мережевою активністю
+    (user=%user.name process=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [execution, mitre_execution]
+
+# defense evasion
+
+- rule: Firewall Modified
+  desc: Зміна правил фаєрволу
+  condition: >
+    spawned_process and
+    proc.name in (iptables, ip6tables, ufw, firewall-cmd, nft) and
+    not system_automation_tool and
+    not (proc.cmdline contains "-L" or
+    proc.cmdline contains "--list" or
+    proc.cmdline contains "status")
+  output: >
+    Правила фаєрволу змінено
+    (usr=%user.name uid=%user.uid command=%proc.name
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [network, mitre_defense_evasion, T1562.004]
+
+- rule: System Log Modified
+  desc: Зміна системних логів
+  condition: >
+    (open_write or evt.type in (unlink, unlinkat)) and
+    fd.name pmatch (/var/log/*) and
+    not fd.name glob /var/log/*.gz and
+    not log_management and
+    not backup_software and
+    not monitoring_software
+  output: >
+    Системний лог змінено
+    (user=%user.name uid=%user.uid process=%proc.name
+    file=%fd.name cmdline=%proc.cmdline parent=%proc.name)
+  priority: WARNING
+  tags: [logs, mitre_defense_evasion, T1070.002]
+
+- rule: Command History Cleared
+  desc: Історі команд видалена
+  condition: >
+    (evt.type in (unlink, unlinkat) or
+    (open_write and evt.arg.flags contains O_TRUNC)) and
+    (fd.name glob /home/*/.bash_history or
+    fd.name glob /home/*/.zsh_history or
+    fd.name=/root/.bash_history or
+    fd.name=/root/.zsh_history) and
+    not backup_software
+  output: >
+    Історія команд видалена/очищена
+    (user=%user.name uid=%user.uid process=%proc.name
+    file=%fd.name cmdline=%prc.cmdline)
+  priority: WARNING
+  tags: [defense_evasion, mitre_defense_evasion, T1070.003]
+
+- rule: Timestomp Detected
+  desc: Можлива зміна timestamps файлів
+  condition: >
+    spawned_process and
+    proc.name=touch and
+    (proc.cmdline contains "-t" or
+    proc.cmdline contains "-d" or
+    proc.cmdline contains "--date") and
+    not system_automation_tool and
+    not backup_software
+  output: >
+    Зміна timestamp файлу
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.name)
+  priority: INFO
+  tags: [defense_evasion, mitre_defense_evasion, T1070.006]
+
+- rule: Auditd Disables
+  desc: Відключення системи аудиту
+  condition: >
+    spawned_process and
+    ((proc.name=service and proc.cmdline contains "auditd stop") or
+    (proc.name=systemctl and proc.cmdline contains "stop auditd") or
+    proc.name=auditctl)
+  output: >
+    Система аудиту відключена
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.name)
+  priority: CRITICAL
+  tags: [defense_evasion, mitre_defense_evasion, T1562.001]
 
