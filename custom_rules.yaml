@@ -477,3 +477,201 @@
   priority: CRITICAL
   tags: [defense_evasion, mitre_defense_evasion, T1562.001]
 
+# command and control
+
+- rule: Outbound Connection to Suspicious Port
+  desc: Зєднання з підозрілими портами
+  condition: >
+    outbound_conn and
+    fd.rport in (suspicious_c2_ports) and
+    not proc.name in (chrome, firefox, chromium, brave, ssh, scp, rsync) and
+    not monitoring_software
+  output: >
+    Підозріле вихідне зєднання
+    (user=%user.name process=%proc.name cmdline=%proc.cmdline
+    connection=%fd.sip:%fd.sport->%fd.rip:fd.rport protocol:%fd.l4proto)
+  priority: WARNING
+  tags: [network, mitre_command_and_control, T1071]
+
+- rule: Suspicious Outbound Connection from Service
+  desc: Веб-сервер або БД робить вихідні зєднання
+  condition: >
+    outbound_conn and
+    proc.name in (nginx, apache2, httpd, mysqld, postgres, redis-server, mongodb, mongod) and
+    not fd.rport in (80, 443, 53, 123, 3306, 5432, 6379, 27017)
+  output: >
+    Підозріле зєднання від сервісу
+    (user=%user.name service=%proc.name cmdline=%proc.cmdline
+    connection=%fd.sip:%fd.sport->%fd.rip:%fd.rport)
+  priority: WARNING
+  tags: [network, mitre_command_and_control, T1071]
+
+- rule: DNS over Non-Standard Port
+  desc: DNS запити не на стандартний порт
+  condition: >
+    outbound_conn and
+    fd.l4proto=udp and
+    fd.rport!=53 and
+    (proc.cmdline contains "dns" or proc.cmdline contains "resolve")
+  output: >
+    DNS через нестандартний порт
+    (user=%user.name process=%proc.name cmdline=%proc.cmdline
+    connection=%fd.sip:%fd.sport->%fd.rip:%fd.rport)
+  priority: INFO
+  tags: [network, mitre_command_and_control, T1071.004]
+
+# discovery
+
+- rule: Network Scanning Tool
+  desc: Використання інструментів сканування мережі
+  condition: >
+    spawned_process and
+    proc.name in (nmap, masscan, nikto, dirb, gobuster, wpscan, sqlmap, metasploit) and
+    not system_automation_tool
+  output: >
+    Інструмент сканування мережі
+    (user=%user.name uid=%user.uid tool=%proc.name
+    cmdline=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [network, mitre_discovery, T1046]
+
+- rule: System Enumeration
+  desc: Перелік системної інформації
+  condition: >
+    spawned_process and
+    proc.name in (whoami, id, w, who, last, lastlog) and
+    not interactive_user and
+    not system_automation_tool and
+    not monitoring_software and
+    not proc.pname in (sshd, login)
+  output: >
+    Системне перелічення
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [discovery, mitre_discovery, T1033]
+
+- rule: Process Descovery
+  desc: Перелік процесів
+  condition: >
+    spawned_process and
+    proc.name in (ps, top, htop, pstree, pgrep) and
+    not interactive_user and
+    not monitoring_software and
+    not system_automation_tool
+  output: >
+    Перелік процесів
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [discovery, mitre_discovery, T1057]
+
+- rule: Network Configuration Discovery
+  desc: Перегляд мережевої конфігурації
+  condition: >
+    spawned_process and
+    proc.name in (ifconfig, ip, route, netstat, ss, arp) and
+    not interactive_user and
+    not monitoring_software and
+    not system_automation_tool
+  output: >
+    Перегляд мережевої конфігурації
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [network, mitre_discovery, T1016]
+
+# lateral movement
+
+- rule: SSH Brute Force Attempt
+  desc: Множинні SSH підключення
+  condition: >
+    spawned_process and
+    proc.name=sshd and
+    proc.cmdline contains "authentication"
+  output: >
+    SSH підключення
+    (user=%user.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [ssh, mitre_lateral_movement]
+  enabled: false
+
+- rule: Sensitive File Copy via SCP
+  desc: Копіювання чутливих файлів через SCP
+  condition: >
+    spawned_process and
+    proc.name in (scp, rsync) and
+    (proc.cmdline contains "/etc/shadow" or
+    proc.cmdline contains "id_rsa" or
+    proc.cmdline contains "authorized_keys")
+  output: >
+    Копіювання чутливого файлу
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [lateral_movement, mitre_lateral_movement, T1021.004]
+
+# Impact
+
+- rule: Data Destruction Command
+  desc: Команда масового видалення
+  condition: >
+    spawned_process and
+    proc.name in (rm, shred, dd) and
+    (proc.cmdline contains "-rf /" or
+    proc.cmdline contains "if=/dev/zero" or
+    proc.cmdline contains "if=/dev/urandom" and
+    not backup_software
+  outpu: >
+    КРИТИЧНО: Команда маосовго видалення
+    (user=%user.name uid=%user.uid command=%proc.name
+    cmdline=%proc.cmdline parent=%proc.pname
+  priority: CRITICAL
+  tags: [impact, mitre_impact, T1485]
+
+- rule: Kernel Panic Triggered
+  desc: Спроба викликати kernel panic
+  condition: >
+    spawned_process and
+    (proc.cmdline contains "/proc/sysrq-trigger" or
+    proc.cmdline contains "echo c >" or
+    proc.cmdline contains "panic")
+  output: >
+    КРИТИЧНО: Спроба викликати kernel panic
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline)
+  priority: CRITICAL
+  tags: [impact, mitre_impact, T1499]
+
+# Information
+
+- rule: Package Manager Activity
+  desc: Втсановлення/Видалення пакетів
+  condition: >
+    spawned_process and
+    proc.name in (package_managers_ and
+    not system_automation_tool and
+    not legitimate_system_service and
+    not (proc.cmdine contains "update" or
+    proc.cmdine contains "upgrade" or
+    proc.cmdine contains "list" or
+    proc.cmdine contains "search" or
+    proc.cmdine contains "--version" or
+    proc.cmdine contains "--help")
+  output: >
+    Пакетний менеджер використано
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: INFO
+  tags: [software]
+
+- rule: System Reboot Initiated
+  desc: Перезавантаження системи
+  condition: >
+    spawned_process and
+    proc.name in (reboot, shutdown, poweroff, halt, init) and 
+    (proc.cmdline contains "reboot" or
+    proc.cmdline contains "poweroff" or
+    proc.cmdline contains "6" or
+    proc.cmdline contains "0")
+  output: >
+    система перезавантажується
+    (user=%user.name command=%proc.name cmdline=%proc.cmdline parent=%proc.pname)
+  priority: WARNING
+  tags: [system]
+    
+
